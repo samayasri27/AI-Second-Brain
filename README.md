@@ -80,7 +80,7 @@ cp .env.example .env
 # Edit .env and add your GROQ_API_KEY
 
 # Start backend
-uvicorn app.main:app --reload --port 8000
+uvicorn backend.main:app --reload --port 8000
 ```
 
 Backend will be available at http://localhost:8000
@@ -101,15 +101,6 @@ npm run dev
 ```
 
 Frontend will be available at http://localhost:5173
-
-### Quick Start Scripts
-```bash
-# Start backend (from project root)
-./start_backend.sh
-
-# Start frontend (from project root)
-./start_frontend.sh
-```
 
 ## 📖 Usage
 
