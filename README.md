@@ -80,7 +80,7 @@ cp .env.example .env
 # Edit .env and add your GROQ_API_KEY
 
 # Start backend
-uvicorn backend.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 Backend will be available at http://localhost:8000
