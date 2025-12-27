@@ -10,12 +10,15 @@ from app.services.document_service import process_document
 from app.services.chat_service import process_chat
 from app.services.task_service import get_all_tasks, update_task_status
 from app.services.bulk_ingestion import ingest_folder, scan_folder_preview
+from app.services.s3_service import s3_service
 from app.utils.scheduler import start_scheduler
 from app.db.sql_models import Document, Topic
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from datetime import datetime
+import uuid
 
 app = FastAPI(
     title="PersonalMind API",
@@ -27,19 +30,16 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite default
-        "http://localhost:3000",  # Next.js default
-        "http://localhost:8080",  # Alternative Vite port
-        "http://localhost:8081",  # Another common port
-        "https://ai-second-brain-eight.vercel.app",  # Your actual Vercel URL
-        "https://*.vercel.app",   # All Vercel preview deployments
+        "http://localhost:5173",  
+        "http://localhost:3000",  
+        "https://ai-second-brain-eight.vercel.app",  
+        "https://*.vercel.app",   
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Create uploads directory
 UPLOAD_DIR = Path("./uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -97,6 +97,7 @@ async def upload_document(
     """
     Upload and process a document
     
+    - Uploads file to S3 (or local storage as fallback)
     - Extracts text from PDF or text files
     - Classifies into PARA category
     - Extracts top 3 topics
@@ -118,28 +119,67 @@ async def upload_document(
     if not title:
         title = file.filename.rsplit(".", 1)[0]
     
-    # Save uploaded file
-    file_path = UPLOAD_DIR / file.filename
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Generate unique filename to avoid conflicts
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"
+    
+    # Try to upload to S3 first, fallback to local storage
+    file_path = None
+    s3_key = None
+    temp_file_path = None
     
     try:
-        # Process document
+        # Create temporary file for processing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}") as temp_file:
+            temp_file_path = temp_file.name
+            shutil.copyfileobj(file.file, temp_file)
+        
+        # Try S3 upload
+        if s3_service.is_available():
+            s3_key = f"documents/{unique_filename}"
+            
+            # Reset file position and upload to S3
+            with open(temp_file_path, "rb") as f:
+                if s3_service.upload_file(f, s3_key, file.content_type):
+                    file_path = s3_key  # Use S3 key as file path
+                    print(f"File uploaded to S3: {s3_key}")
+                else:
+                    raise Exception("Failed to upload to S3")
+        else:
+            # Fallback to local storage
+            local_file_path = UPLOAD_DIR / unique_filename
+            shutil.move(temp_file_path, local_file_path)
+            file_path = str(local_file_path)
+            temp_file_path = None  # Don't delete since we moved it
+            print(f"File saved locally: {file_path}")
+        
+        # Process document (the process_document function will handle both S3 and local paths)
         result = process_document(
             db=db,
             vector_store=vector_store,
-            file_path=str(file_path),
+            file_path=file_path,
             title=title,
-            doc_type=file_extension
+            doc_type=file_extension,
+            s3_key=s3_key  # Pass S3 key for future reference
         )
         
         return DocumentUploadResponse(**result)
     
     except Exception as e:
-        # Clean up file on error
-        if file_path.exists():
+        # Clean up on error
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        
+        if s3_key and s3_service.is_available():
+            s3_service.delete_file(s3_key)
+        elif file_path and file_path.startswith(str(UPLOAD_DIR)) and os.path.exists(file_path):
             os.remove(file_path)
+        
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+    
+    finally:
+        # Clean up temp file if it still exists
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 
 @app.post("/ask", response_model=ChatResponse)

@@ -12,7 +12,9 @@ class Document(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(Text, nullable=False)
     type = Column(Text, nullable=False)
-    path = Column(Text, nullable=False)
+    path = Column(Text, nullable=False)  # Local path or S3 key
+    s3_key = Column(Text, nullable=True)  # S3 object key if stored in S3
+    storage_type = Column(Text, nullable=False, default="local")  # "local" or "s3"
     created_at = Column(DateTime, server_default=func.now())
     tags = Column(JSON, default=list)
     para_type = Column(Text, nullable=True)  # Projects, Areas, Resources, Archives
